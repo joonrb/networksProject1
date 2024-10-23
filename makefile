@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra -g
 SERVER = ftpserver
 CLIENT = ftpclient
 SERVER_SRC = serverEx.c util.c
-CLIENT_SRC = clientEx.c
+CLIENT_SRC = clientEx.c util.c
 HEADERS = util.h
 
 all: $(SERVER) $(CLIENT)
@@ -11,7 +11,7 @@ all: $(SERVER) $(CLIENT)
 $(SERVER): $(SERVER_SRC) $(HEADERS)
 	$(CC) $(CFLAGS) -o $(SERVER) $(SERVER_SRC)
 
-$(CLIENT): $(CLIENT_SRC)
+$(CLIENT): $(CLIENT_SRC) $(HEADERS)
 	$(CC) $(CFLAGS) -o $(CLIENT) $(CLIENT_SRC)
 
 clean:
