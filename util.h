@@ -13,9 +13,11 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 21
 
+//following functions are used to send a list of files in the current directory, change the current working directory, and get the current working directory
 void send_file_list(int client_sock);
 void handle_cwd(int client_sock, char *dir);
 void handle_pwd(int client_sock);
+//following functions are used to create a client socket and handle local and server commands
 int create_client_socket();
 void handle_local_commands(char *buffer);
 void handle_server_commands(int sock, char *buffer);
