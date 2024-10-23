@@ -154,6 +154,13 @@ void process_commands(int client_sock){
         }
         else if(userAuth && passAuth && strncmp("CWD", buffer, 4) == 0){
             //Code for CWD command
+            char *dir = buffer + 4;
+            while(*dir == ' ') dir++; //skip spaces
+            if(chdir(dir) == 0){
+                char cwd[BUFFER_SIZE];
+                getcwd(cwd, sizeof(cwd));
+                snprintf(buffer, BUFFER_SIZE, "200 directory changed to")
+            }
         }
         else if(userAuth && passAuth && strncmp("!CWD", buffer, 4) == 0){
             //Code for !CWD command
