@@ -98,14 +98,19 @@ int main() {
             } else {
                 printf("Unknown local command\n"); //If the command is not recognized, print an error message
             }
+        } else if (strncmp(buffer, "LIST", 4) == 0) {
+            send(sock, buffer, strlen(buffer), 0);
+            while ((bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0)) > 0) { //Receive the response from the server
+                buffer[bytes_received] = '\0';
+                printf("%s", buffer);
+                if (strstr(buffer, "226") != NULL) { //If the response contains "226", break the loop
+                    break;
+                }
+            }
         } else {
             // Send command to server
             if (send(sock, buffer, strlen(buffer), 0) < 0) {
                 perror("send() failed");
-                break;
-            }
-
-            if (strcmp(buffer, "QUIT") == 0) {
                 break;
             }
 

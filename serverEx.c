@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include "util.h"
 
 #define PORT 21
 #define BUFFER_SIZE 1024
@@ -147,37 +148,16 @@ void process_commands(int client_sock){
             //Code for RETR command
         }
         else if(userAuth && passAuth && strncmp("LIST", buffer, 4) == 0){
-            //Code for LIST command
-        }
-        else if(userAuth && passAuth && strncmp("!LIST", buffer, 4) == 0){
-            //Code for !LIST command
+            send_file_list(client_sock);
         }
         else if(userAuth && passAuth && strncmp("CWD", buffer, 3) == 0){
-            char *dir = buffer + 4;
-            while(*dir == ' ') dir++; // skip spaces
-            if(chdir(dir) == 0){
-                char cwd[BUFFER_SIZE];
-                if(getcwd(cwd, sizeof(cwd)) != NULL){
-                    snprintf(buffer, BUFFER_SIZE, "200 directory changed to %s\n", cwd);
-                } else {
-                    snprintf(buffer, BUFFER_SIZE, "550 Error getting current directory.\n");
-                }
-            } else {
-                snprintf(buffer, BUFFER_SIZE, "550 No such file or directory.\n");
-            }
-            send(client_sock, buffer, strlen(buffer), 0);
+            handle_cwd(client_sock, buffer + 4);
         }
         else if(userAuth && passAuth && strncmp("PWD", buffer, 3) == 0){
-            char cwd[BUFFER_SIZE];
-            if(getcwd(cwd, sizeof(cwd)) != NULL){
-                snprintf(buffer, BUFFER_SIZE, "257 \"%s\"\n", cwd);
-            } else {
-                snprintf(buffer, BUFFER_SIZE, "550 Error getting current directory.\n");
-            }
-            send(client_sock, buffer, strlen(buffer), 0);
+            handle_pwd(client_sock);
         }
         // The server should not handle !CWD and !PWD commands
-        else if(userAuth && passAuth && (strncmp("!CWD", buffer, 4) == 0 || strncmp("!PWD", buffer, 4) == 0)){
+        else if(userAuth && passAuth && (strncmp("!CWD", buffer, 4) == 0 || strncmp("!PWD", buffer, 4) == 0 || strncmp("!LIST", buffer, 4) == 0)){
             send(client_sock, "202 Command not implemented.\n", 29, 0);
         }
         else {
