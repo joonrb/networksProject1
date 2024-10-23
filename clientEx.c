@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <unistd.h>       // For getcwd() and chdir()
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -50,22 +50,77 @@ int main() {
     printf("Connected to FTP server at %s:%d\n", SERVER_IP, PORT);
 
     // Receive and print the welcome message
-    recv(sock, buffer, BUFFER_SIZE - 1, 0);
-    printf("%s", buffer);
+    int bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+    if (bytes_received > 0) {
+        buffer[bytes_received] = '\0';
+        printf("%s", buffer);
+    }
 
     // Send and receive commands
     while (1) {
-        fgets(buffer, BUFFER_SIZE, stdin);
-        buffer[strcspn(buffer, "\n")] = 0; // Remove newline character
+        printf("ftp> ");
+        fflush(stdout);
 
-        send(sock, buffer, strlen(buffer), 0);
-
-        if (strcmp(buffer, "QUIT") == 0) {
+        if (fgets(buffer, BUFFER_SIZE, stdin) == NULL) {
+            // EOF or error
             break;
         }
+        buffer[strcspn(buffer, "\n")] = 0; // Remove newline character
 
-        recv(sock, buffer, BUFFER_SIZE - 1, 0);
-        printf("Server: %s", buffer);
+        /*the code logic is as follows:
+        - if the command starts with '!', it is a local command and should be executed on the client side
+        - otherwise, it is a server command and should be executed on the server side
+        */
+        //Check if the command starts with '!'
+        if (buffer[0] == '!') {
+            // Handle local commands
+            if (strcmp(buffer, "!PWD") == 0) { //Code for !PWD command
+                char cwd[BUFFER_SIZE];  //Declare a buffer to store the current working directory
+                if (getcwd(cwd, sizeof(cwd)) != NULL) { //If successful, get the current working directory
+                    printf("Local current directory: %s\n", cwd); //Print the current working directory
+                } else {
+                    perror("getcwd() error"); //If getting the directory failed, print an error message
+                }
+            } else if (strncmp(buffer, "!CWD ", 5) == 0) { //Code for !CWD command
+                // Get the directory name
+                char *dir = buffer + 5;
+                if (chdir(dir) == 0) { //If changing the directory is successful, print a success message
+                    printf("Local directory changed to %s\n", dir);
+                } else {
+                    perror("chdir() error"); //If changing the directory failed, print an error message
+                }
+            } else if (strcmp(buffer, "!LIST") == 0) {
+                // Execute 'ls' command to list local directory
+                int ret = system("ls"); //Execute the 'ls' command
+                if (ret == -1) {
+                    perror("system() error");
+                }
+            } else {
+                printf("Unknown local command\n"); //If the command is not recognized, print an error message
+            }
+        } else {
+            // Send command to server
+            if (send(sock, buffer, strlen(buffer), 0) < 0) {
+                perror("send() failed");
+                break;
+            }
+
+            if (strcmp(buffer, "QUIT") == 0) {
+                break;
+            }
+
+            bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0); //Receive the response from the server
+            if (bytes_received > 0) { //If the response is received successfully, print it
+                buffer[bytes_received] = '\0'; //Add a null terminator to the end of the response
+                printf("Server: %s", buffer); //Print the response
+            } else if (bytes_received == 0) { //If the connection is closed by the server, print a message and break the loop
+                printf("Connection closed by server.\n");
+                break;
+            } else {
+                perror("recv() failed"); //If there is an error in receiving the response, print an error message and break the loop
+                break;
+            }
+        }
     }
 
     close(sock);
