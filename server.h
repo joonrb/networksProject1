@@ -1,7 +1,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#define PORT 21
+#define PORT 9002
 #define BUFFER_SIZE 1024
 #define NUM_OF_USERS 3
 #define MAX_NAME_SIZE 10
@@ -39,6 +39,7 @@ void checkPass(User* userList, int index, int fd, char *buffer);
 void portCom(User* userList, int index, int fd, char *buffer);
 void storCom(User* userList, int index, int fd, char *buffer);
 void retrCom(User* userList, int index, int fd, char *buffer);
+void listCom(User* userList, int index, int fd, char *buffer);
 int open_data_connection(struct in_addr client_addr, int client_port);
 void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* userList);
 void send_msg(int fd, char* msg);

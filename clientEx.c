@@ -5,6 +5,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <signal.h> 
+#include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -41,7 +43,7 @@ int main() {
     // Configure the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(21);
+    server_addr.sin_port = htons(9002);
     server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
 
     if (bind(server_fd, (const struct sockaddr *)&client_addr, client_len) < 0) {
@@ -132,109 +134,10 @@ void handleCommand(int server_fd){
             storCom(server_fd, buffer, data_listen_fd);
         }
         else if(strncmp(buffer, "RETR", 4) == 0){
-            // Send PORT command first
-            int data_listen_fd = portCom(server_fd);
-            if(data_listen_fd < 0){
-                fprintf(stderr, "Failed to send PORT command.\n");
-                return;
-            }
-
-            // Wait for server's response to PORT command
-            char response[BUFFER_SIZE];
-            int bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
-            if (bytes_received <= 0) {
-                perror("Failed to receive server response to PORT command");
-                close(server_fd);
-                exit(EXIT_FAILURE);
-            }
-            response[bytes_received] = '\0';
-            printf("%s", response);
-
-            // Check if the server accepted the PORT command
-            if (strncmp(response, "200", 3) != 0) {
-                fprintf(stderr, "Server did not accept PORT command.\n");
-                close(data_listen_fd);
-                return;
-            }
-
-            // Send RETR command
-            send_msg(server_fd, buffer);
-
-            // Wait for server's response to RETR command
-            bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
-            if (bytes_received <= 0) {
-                perror("Failed to receive server response to RETR command");
-                close(server_fd);
-                exit(EXIT_FAILURE);
-            }
-            response[bytes_received] = '\0';
-            printf("%s", response);
-
-            // Check if the server is ready to send the file
-            if (strncmp(response, "150", 3) != 0 && strncmp(response, "125", 3) != 0) {
-                fprintf(stderr, "Server did not accept RETR command.\n");
-                close(data_listen_fd);
-                return;
-            }
-
-            // Now fork a child process to handle data transfer
-            int pid = fork();
-            if(pid < 0){
-                perror("fork error");
-                close(server_fd);
-                exit(1);
-            }
-
-            if(pid == 0){
-                // Child process
-                signal(SIGTERM, closeChild);
-                children.data_listen_fd = data_listen_fd;
-
-                // Accept data connection
-                children.data_fd = accept(children.data_listen_fd, NULL, NULL);
-                if(children.data_fd < 0){
-                    perror("Data connection error");
-                    closeChild(SIGTERM);
-                }
-
-                // Open file for writing
-                char* fileName = buffer + 5; // Skip 'RETR ' (5 characters)
-                children.file = fopen(fileName, "wb");
-                if (!children.file) {
-                    perror("Failed to open file");
-                    closeChild(SIGTERM);
-                }
-
-                // Receive data from server and write to file
-                char file_buffer[BUFFER_SIZE];
-                int bytes_received_data;
-                while ((bytes_received_data = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
-                    if(fwrite(file_buffer, 1, bytes_received_data, children.file) < bytes_received_data){
-                        perror("File write error");
-                        closeChild(SIGTERM);
-                    }
-                }
-
-                fclose(children.file);
-                close(children.data_fd);
-                close(children.data_listen_fd);
-
-                closeChild(SIGTERM);
-            } else {
-                // Parent process
-                close(data_listen_fd); // Close listening socket in parent
-
-                // Wait for the child process to finish
-                int status;
-                waitpid(pid, &status, 0);
-
-                // Wait for server's final response (e.g., 226 Transfer complete)
-                bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
-                if (bytes_received > 0) {
-                    response[bytes_received] = '\0';
-                    printf("%s", response);
-                }
-            }
+            retrCom(server_fd, buffer);
+        }
+        else if(strncmp(buffer, "LIST", 4) == 0){
+            listCom(server_fd, buffer);
         }
         else {
             // For other commands, send them directly
@@ -398,7 +301,53 @@ void storCom(int server_fd, char* buffer, int data_listen_fd){
     }
 }
 
-void retrCom(int server_fd, char* buffer, int data_listen_fd){
+void retrCom(int server_fd, char* buffer){
+    // Send PORT command first
+    int data_listen_fd = portCom(server_fd);
+    if(data_listen_fd < 0){
+        fprintf(stderr, "Failed to send PORT command.\n");
+        return;
+    }
+
+    // Wait for server's response to PORT command
+    char response[BUFFER_SIZE];
+    int bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
+    if (bytes_received <= 0) {
+        perror("Failed to receive server response to PORT command");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+    response[bytes_received] = '\0';
+    printf("%s", response);
+
+    // Check if the server accepted the PORT command
+    if (strncmp(response, "200", 3) != 0) {
+        fprintf(stderr, "Server did not accept PORT command.\n");
+        close(data_listen_fd);
+        return;
+    }
+
+    // Send RETR command
+    send_msg(server_fd, buffer);
+
+    // Wait for server's response to RETR command
+    bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
+    if (bytes_received <= 0) {
+        perror("Failed to receive server response to RETR command");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+    response[bytes_received] = '\0';
+    printf("%s", response);
+
+    // Check if the server is ready to send the file
+    if (strncmp(response, "150", 3) != 0 && strncmp(response, "125", 3) != 0) {
+        fprintf(stderr, "Server did not accept RETR command.\n");
+        close(data_listen_fd);
+        return;
+    }
+
+    // Now fork a child process to handle data transfer
     int pid = fork();
     if(pid < 0){
         perror("fork error");
@@ -409,83 +358,148 @@ void retrCom(int server_fd, char* buffer, int data_listen_fd){
     if(pid == 0){
         // Child process
         signal(SIGTERM, closeChild);
-        children.command_fd = server_fd;
         children.data_listen_fd = data_listen_fd;
 
-        // Send RETR command
-        send_msg(children.command_fd, buffer);
-
-        // Wait for server's response to RETR command
-        char response[BUFFER_SIZE];
-        int bytes_received = recv(children.command_fd, response, BUFFER_SIZE, 0);
-        if (bytes_received <= 0) {
-            perror("Failed to receive server response to RETR command");
-            closeChild(SIGTERM);
-        }
-        response[bytes_received] = '\0';
-        printf("%s", response);
-
-        // Check if the server is ready to send the file
-        if (strncmp(response, "150", 3) != 0 && strncmp(response, "125", 3) != 0) {
-            fprintf(stderr, "Server did not accept RETR command.\n");
-            closeChild(SIGTERM);
-        }
-
         // Accept data connection
-        int data = accept(children.data_listen_fd, NULL, NULL);
-        if(data < 0){
+        children.data_fd = accept(children.data_listen_fd, NULL, NULL);
+        if(children.data_fd < 0){
             perror("Data connection error");
             closeChild(SIGTERM);
         }
-        close(children.data_listen_fd);
-        children.data_fd = data;
 
         // Open file for writing
         char* fileName = buffer + 5; // Skip 'RETR ' (5 characters)
-        char tmp[FILENAME_MAX];
-		char file[FILENAME_MAX];
-		snprintf(file, FILENAME_MAX, "%s", fileName);
-		snprintf(tmp, FILENAME_MAX, "%s.incomplete", fileName);
-
-        children.file = fopen(tmp, "wb");
+        children.file = fopen(fileName, "wb");
         if (!children.file) {
             perror("Failed to open file");
             closeChild(SIGTERM);
         }
 
         // Receive data from server and write to file
-        char recBuff[BUFFER_SIZE];
+        char file_buffer[BUFFER_SIZE];
         int bytes_received_data;
-        while ((bytes_received_data = recv(children.data_fd, recBuff, BUFFER_SIZE, 0)) > 0) {
-            if(fwrite(recBuff, 1, bytes_received_data, children.file) < bytes_received_data){
+        while ((bytes_received_data = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
+            if(fwrite(file_buffer, 1, bytes_received_data, children.file) < bytes_received_data){
                 perror("File write error");
                 closeChild(SIGTERM);
             }
         }
 
-        if (rename(tmp, file) == -1) {
-			if (errno == EEXIST) { // if there was an error because the file already exists, remove it
-				if (remove(file) == -1) {
-					perror("remove");
-					closeChild(SIGTERM);
-				}
-			} else {
-				perror("rename"); // some other error
-				closeChild(SIGTERM);
-			}
-		}
+        fclose(children.file);
+        close(children.data_fd);
+        close(children.data_listen_fd);
 
-        // Wait for server's transfer completion response
-        bytes_received = recv(children.command_fd, response, BUFFER_SIZE, 0);
+        closeChild(SIGTERM);
+    } else {
+        // Parent process
+        close(data_listen_fd); // Close listening socket in parent
+
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+
+        // Wait for server's final response (e.g., 226 Transfer complete)
+        bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
         if (bytes_received > 0) {
             response[bytes_received] = '\0';
             printf("%s", response);
         }
-
-        closeChild(SIGTERM);
     }
 }
 
+void listCom(int server_fd, char* buffer){
+    // Send PORT command first
+    int data_listen_fd = portCom(server_fd);
+    if(data_listen_fd < 0){
+        fprintf(stderr, "Failed to send PORT command.\n");
+        return;
+    }
+
+    // Wait for server's response to PORT command
+    char response[BUFFER_SIZE];
+    int bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
+    if (bytes_received <= 0) {
+        perror("Failed to receive server response to PORT command");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+    response[bytes_received] = '\0';
+    printf("%s", response);
+
+    // Check if the server accepted the PORT command
+    if (strncmp(response, "200", 3) != 0) {
+        fprintf(stderr, "Server did not accept PORT command.\n");
+        close(data_listen_fd);
+        return;
+    }
+
+    // Send LIST command
+    send_msg(server_fd, "LIST");
+
+    // Wait for server's response to LIST command
+    bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
+    if (bytes_received <= 0) {
+        perror("Failed to receive server response to LIST command");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+    response[bytes_received] = '\0';
+    printf("%s", response);
+
+    // Check if the server is ready to send the directory listing
+    if (strncmp(response, "150", 3) != 0 && strncmp(response, "125", 3) != 0) {
+        fprintf(stderr, "Server did not accept LIST command.\n");
+        close(data_listen_fd);
+        return;
+    }
+
+    // Now fork a child process to handle data transfer
+    int pid = fork();
+    if(pid < 0){
+        perror("fork error");
+        close(server_fd);
+        exit(1);
+    }
+
+    if(pid == 0){
+        // Child process
+        signal(SIGTERM, closeChild);
+        children.data_listen_fd = data_listen_fd;
+
+        // Accept data connection
+        children.data_fd = accept(children.data_listen_fd, NULL, NULL);
+        if(children.data_fd < 0){
+            perror("Data connection error");
+            closeChild(SIGTERM);
+        }
+
+        // Receive directory listing from server and display it
+        char data_buffer[BUFFER_SIZE];
+        int bytes_received_data;
+        while ((bytes_received_data = recv(children.data_fd, data_buffer, BUFFER_SIZE, 0)) > 0) {
+            fwrite(data_buffer, 1, bytes_received_data, stdout);
+        }
+
+        close(children.data_fd);
+        close(children.data_listen_fd);
+
+        closeChild(SIGTERM);
+    } else {
+        // Parent process
+        close(data_listen_fd); // Close listening socket in parent
+
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+
+        // Wait for server's final response (e.g., 226 Transfer complete)
+        bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
+        if (bytes_received > 0) {
+            response[bytes_received] = '\0';
+            printf("%s", response);
+        }
+    }
+}
 
 void closeChild(int sig) {
 	// clean up and terminate the child process

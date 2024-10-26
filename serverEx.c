@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include <signal.h> 
 #include <sys/select.h>
 #include <errno.h>
 
@@ -42,6 +43,9 @@ int main(){
         perror("Socket creation failed");
         return 1;
     }
+
+    int value  = 1;
+	setsockopt(server_fd,SOL_SOCKET,SO_REUSEADDR,&value,sizeof(value));
 
     // Set up the server address
     memset(&server_addr, 0, server_len);
@@ -221,7 +225,7 @@ void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* user
             retrCom(userList, index, fd, buffer);
         }
         else if(strncmp("LIST", buffer, 4) == 0){
-            //Code for LIST command
+            listCom(userList, index, fd, buffer);
         }
         else if(strncmp("CWD", buffer, 4) == 0){
             //Code for CWD command
@@ -426,6 +430,67 @@ void retrCom(User* userList, int index, int fd, char *buffer){
         }
     }
 }
+
+void listCom(User* userList, int index, int fd, char *buffer){
+    if(!userList[index].auth){
+        send_msg(fd, "530 Not logged in.\n");
+        return;
+    } else if(userList[index].addr.s_addr == 0 || userList[index].port == 0) {
+        send_msg(fd, "425 Use PORT or PASV first.\n");
+        return;
+    } else {
+        // Send preliminary reply
+        send_msg(fd, "150 Opening data connection.\n");
+
+        int pid = fork();
+        if(pid < 0){
+            perror("fork error");
+            exit(1);
+        }
+        if(pid == 0){
+            // Child process
+            signal(SIGTERM, closeChild);
+            children.command_fd = fd;
+
+            // Open data connection
+            if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
+                send_msg(children.command_fd, "425 Can't open data connection.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Generate directory listing
+            char cmd[256];
+            snprintf(cmd, sizeof(cmd), "ls -l ./%s%s", userList[index].username, userList[index].dir);
+
+            FILE *ls = popen(cmd, "r");
+            if (!ls) {
+                perror("Failed to run ls command");
+                send_msg(children.command_fd, "550 Failed to list directory.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Read the output of the ls command and send it over the data connection
+            char ls_buffer[BUFFER_SIZE];
+            size_t bytes_read;
+            while ((bytes_read = fread(ls_buffer, 1, sizeof(ls_buffer), ls)) > 0) {
+                if (send(children.data_fd, ls_buffer, bytes_read, 0) < 0) {
+                    perror("Send error");
+                    send_msg(children.command_fd, "426 Connection closed; transfer aborted.\n");
+                    pclose(ls);
+                    closeChild(SIGTERM);
+                }
+            }
+
+            pclose(ls);
+            close(children.data_fd);
+
+            // Send transfer completion reply
+            send_msg(children.command_fd, "226 Transfer complete.\n");
+            closeChild(SIGTERM);
+        }
+    }
+}
+
 
 void send_msg(int fd, char* msg) {
 	send(fd, msg, strlen(msg)+1, 0);
