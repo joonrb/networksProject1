@@ -6,59 +6,35 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include <sys/select.h>
+#include <errno.h>
 
-#define PORT 21
-#define BUFFER_SIZE 1024
+#include "server.h"
 
-// Structure to hold user credentials
-typedef struct{
-    char username[50];
-    char password[50];
-}Login;
-
-Login list[100];  // Adjust size based on expected number of users
-int userNum = 0;
-
-// Load username and password from users.csv
-void loadLogin(){
-    FILE *file = fopen("users.csv", "r");
-    if(!file){
-        perror("Failed to open file");
-        exit(1);
-    }
-    while(fscanf(file, "%49[^,],%49s\n", list[userNum].username, list[userNum].password) == 2){
-        userNum++;
-    }
-    fclose(file);
-}
-
-bool checkUser(char *user){
-    for(int i = 0; i < userNum; i++){
-        if(strcmp(user, list[i].username) == 0){
-            return true;
-        }
-    }
-    return false;
-}
-
-bool checkPass(char *user, char *pass){
-    for(int i = 0; i < userNum; i++){
-        if(strcmp(user, list[i].username) == 0 && strcmp(pass, list[i].password) == 0){
-            return true;
-        }
-    }
-    return false;
-}
-
-// Function declarations
-void process_commands(int client_sock);
+Login db[NUM_OF_USERS];
+ChildP children;
+char* server_dir = "./server";
 
 int main(){
-    loadLogin();
-
     int server_fd, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
+    socklen_t server_len = sizeof(server_addr);
+
+    User userList[MAX_CONNECT];
+    for(int i = 0 ; i < MAX_CONNECT; i++){
+        userList[i].userfd = -1;
+        userList[i].auth = 0;
+        userList[i].username = NULL;
+        bzero(userList[i].dir, sizeof(userList[i].dir));
+        sprintf(userList[i].dir, "/");
+    }
+
+    loadUser(db);
+    if(chdir(server_dir) != 0){
+        perror("chdir error");
+        exit(1);
+    }
 
     // Create socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -68,15 +44,14 @@ int main(){
     }
 
     // Set up the server address
-    memset(&server_addr, 0, sizeof(server_addr));
+    memset(&server_addr, 0, server_len);
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons(PORT);
 
     // Bind the socket
-    if(bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if(bind(server_fd, (struct sockaddr *)&server_addr, server_len) < 0) {
         perror("Socket bind failed");
-        close(server_fd);
         return 1;
     }
 
@@ -87,91 +62,424 @@ int main(){
         return 1;
     }
 
+    fd_set all_sockets;
+	fd_set ready_sockets;
+
+    int max_socket_so_far = server_fd;
+
+	FD_ZERO(&all_sockets);
+	FD_SET(server_fd,&all_sockets);
+
     printf("FTP Server is listening on port %d\n", PORT);
 
     // Accept clients
     while(1){
-        client_sock = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
-        if(client_sock < 0) {
-            perror("Accept failed");
-            continue;
+        ready_sockets = all_sockets;
+
+        if(select(max_socket_so_far+1,&ready_sockets,NULL,NULL,NULL)<0)
+		{
+			perror("select error");
+			exit(EXIT_FAILURE);
+		}
+
+        for(int fd = 3 ; fd <= max_socket_so_far; fd++){
+            if(FD_ISSET(fd, &ready_sockets)){
+                if(fd == server_fd){
+                    client_sock = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+
+                    if (client_sock < 0) {
+                        perror("accept");
+                    }
+
+                    send_msg(client_sock, "220 Service ready for new user! \n");
+
+                    FD_SET(client_sock, &all_sockets);
+                    if (client_sock > max_socket_so_far) {
+                        max_socket_so_far = client_sock;
+                    }
+
+                    for(int i = 0; i < MAX_CONNECT; i++){
+                        if(userList[i].userfd < 0){
+                            userList[i].userfd = client_sock;
+                            break;
+                        }
+                    }
+                }
+                else{
+                    handleCommand(fd, &all_sockets, &max_socket_so_far, userList);
+                }
+            }
         }
-        
-        printf("Connection established with %s\n", inet_ntoa(client_addr.sin_addr));
-        process_commands(client_sock);
-        close(client_sock);
     }
 
     close(server_fd);
     return 0;
 }
 
-// Function to process commands from client
-void process_commands(int client_sock){
-    char buffer[BUFFER_SIZE];
-    int bytes_read;
-    char currentUser[50] = {0};
-    bool userAuth = false;
-    bool passAuth = false;
 
-    // Send welcome message
-    send(client_sock, "220 Welcome to Simple FTP\n", 26, 0);
+void loadUser(Login* db){
+    FILE *file = fopen("users.csv", "r");
+    if(!file){
+        perror("Failed to open file");
+        exit(1);
+    }
+    while(fscanf(file, "%49[^,],%49s\n", db[userNum].username, db[userNum].password) == 2){
+        userNum++;
+    }
+    fclose(file);
+}
 
-    while((bytes_read = recv(client_sock, buffer, BUFFER_SIZE - 1, 0)) > 0){
-        buffer[bytes_read] = '\0';
-        printf("Received: %s\n", buffer);
-
-        if(strncmp("USER", buffer, 4) == 0){
-            strcpy(currentUser, buffer + 5);
-            if(checkUser(currentUser)){
-                userAuth = true;
-                send(client_sock, "331 Username OK, need password.\n", 31, 0);
-            }
-            else{
-                send(client_sock, "530 Not logged in.\n", 24, 0);
-            }
-        }
-        else if(strncmp("PASS", buffer, 4) == 0 && userAuth){
-            if(checkPass(currentUser, buffer + 5)){
-                passAuth = true;
-                send(client_sock, "230 User logged in, proceed.\n", 31, 0);
-            }
-            else{
-                send(client_sock, "530 Not logged in.\n", 24, 0);
+void checkUser(User* userList, int index, int fd, char *buffer){
+    if(strncmp(buffer + 4, " ", 1) && strncmp(buffer + 4, "\n", 1)){
+        send_msg(fd, "202 command not implemented. \n");
+    }
+    else if(userList[index].username != NULL){
+        send_msg(fd, "503 Bad sequence of commands. \n");
+    }
+    else{
+        for(int i = 0; i < userNum; i++){
+            if(strncmp(buffer + 5, db[i].username, sizeof(db[i].username)) == 0){
+                userList[index].username = db[i].username;
+                send_msg(fd, "331 Username OK, need password. \n");
             }
         }
-        else if(userAuth && passAuth && strncmp("STOR", buffer, 4) == 0){
-            //Code for STOR command
-        }
-        else if(userAuth && passAuth && strncmp("RETR", buffer, 4) == 0){
-            //Code for RETR command
-        }
-        else if(userAuth && passAuth && strncmp("LIST", buffer, 4) == 0){
-            //Code for LIST command
-        }
-        else if(userAuth && passAuth && strncmp("!LIST", buffer, 4) == 0){
-            //Code for !LIST command
-        }
-        else if(userAuth && passAuth && strncmp("CWD", buffer, 4) == 0){
-            //Code for CWD command
-        }
-        else if(userAuth && passAuth && strncmp("!CWD", buffer, 4) == 0){
-            //Code for !CWD command
-        }
-        else if(userAuth && passAuth && strncmp("PWD", buffer, 4) == 0){
-            //Code for PWD command
-        }
-        else if(userAuth && passAuth && strncmp("!PWD", buffer, 4) == 0){
-            //Code for !PWD command
-        }
-        else {
-            // If neither username nor password is validated, prompt for login
-            send(client_sock, "530 Please login with USER and PASS.\n", 36, 0);
-        }
+    }
+}
 
-        if(strncmp("QUIT", buffer, 4) == 0){
-            send(client_sock, "221 Goodbye\n", 12, 0);
+void checkPass(User* userList, int index, int fd, char *buffer){
+    if(strncmp(buffer + 4, " ", 1) && strncmp(buffer + 4, "\n", 1)){
+        send_msg(fd, "202 command not implemented. \n");
+    }
+    else if(userList[index].username == NULL || userList[index].auth){
+        send_msg(fd, "503 Bad sequence of commands. \n");
+    }
+    else{
+        for(int i = 0; i < userNum; i++){
+            if(strcmp(userList[index].username, db[i].username) == 0 && strncmp(buffer + 5, db[i].password, sizeof(db[i].password)) == 0){
+                userList[index].auth = 1;
+                send_msg(fd, "230 User logged in, proceed. \n");
+            }
+        }
+    }
+}
+
+void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* userList){
+    int index = -1;
+    for(int i = 0; i < MAX_CONNECT; i++){
+        if(userList[i].userfd == fd){
+            index = i;
             break;
         }
     }
+    if(index == -1){
+        perror("you shouldn't see this");
+        exit(1);
+    }
+
+    char buffer[BUFFER_SIZE];
+    bzero(buffer,sizeof(buffer));
+    int bytes_read;
+
+    if((bytes_read = recv(fd, buffer, BUFFER_SIZE - 1, 0)) < 0) {
+        perror("Error reading incoming stream\n");
+        close(fd);
+        userList[index].userfd = -1;
+    }
+    else if (bytes_read == 0) {
+        close(fd);
+        FD_CLR(fd, allsocket);
+        userList[index].userfd = -1;
+        userList[index].auth = 0;
+        userList[index].username = NULL;
+        bzero(userList[index].dir, sizeof(userList[index].dir));
+        sprintf(userList[index].dir, "/");
+
+        printf("Client %d disconnected\n", fd);
+    }
+    else{
+        if (userList[index].buffer_len + bytes_read >= BUFFER_SIZE) {
+            // Buffer overflow, handle error
+            send_msg(fd, "500 Command too long.\n");
+            userList[index].buffer_len = 0;
+            return;
+        }
+
+        buffer[bytes_read] = '\0';
+        if (strncmp("USER", buffer, 4) == 0) {
+            checkUser(userList, index, fd, buffer);
+        } 
+        else if (strncmp("PASS", buffer, 4) == 0) {
+            checkPass(userList, index, fd, buffer);
+        }
+        else if (strncmp("PORT", buffer, 4) == 0) {
+            portCom(userList, index, fd, buffer);
+        }
+        else if(strncmp("STOR", buffer, 4) == 0){
+            storCom(userList, index, fd, buffer);
+        }
+        else if(strncmp("RETR", buffer, 4) == 0){
+            retrCom(userList, index, fd, buffer);
+        }
+        else if(strncmp("LIST", buffer, 4) == 0){
+            //Code for LIST command
+        }
+        else if(strncmp("CWD", buffer, 4) == 0){
+            //Code for CWD command
+        }
+        else if(strncmp("PWD", buffer, 4) == 0){
+            //Code for PWD command
+        }
+        else if(strncmp("QUIT", buffer, 4) == 0){
+            //send(client_sock, "221 Goodbye\n", 12, 0);
+        }
+        else {
+            // Wrong commands 
+            send_msg(fd, "202 Command not implemented. HC\n");
+        }
+    }
+}
+
+void portCom(User* userList, int index, int fd, char *buffer){
+    // Trim trailing whitespace and control characters
+    char *newline = strpbrk(buffer, "\r\n");
+    if (newline) *newline = '\0';
+
+    // Print the received buffer
+    printf("Received PORT command: '%s'\n", buffer);
+
+    if (buffer[4] != ' ') {
+        send_msg(fd, "202 command not implemented. PC\n");
+        return;
+    } else if (!userList[index].auth) {
+        send_msg(fd, "530 Not logged in.\n");
+        return;
+    } else {
+        int h1, h2, h3, h4, p1, p2;
+        if (sscanf(buffer + 5, "%d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
+            send_msg(fd, "501 Syntax error in parameters or arguments.\n");
+            return;
+        }
+
+        // Print parsed IP and port components
+        printf("Parsed IP address: %d.%d.%d.%d\n", h1, h2, h3, h4);
+        printf("Parsed port components: %d, %d\n", p1, p2);
+
+        // Validate IP and port components
+        if ((h1 | h2 | h3 | h4 | p1 | p2) & ~0xFF) {
+            send_msg(fd, "501 Invalid IP address or port.\n");
+            return;
+        }
+
+        char addr_str[INET_ADDRSTRLEN];
+        snprintf(addr_str, sizeof(addr_str), "%d.%d.%d.%d", h1, h2, h3, h4);
+
+        userList[index].port = (p1 << 8) | p2;
+
+        printf("Computed port: %d\n", userList[index].port);
+
+        if (inet_pton(AF_INET, addr_str, &(userList[index].addr)) != 1) {
+            send_msg(fd, "501 Invalid IP address.\n");
+            return;
+        }
+
+        // Print stored IP address
+        char debug_ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &(userList[index].addr), debug_ip_str, INET_ADDRSTRLEN);
+        printf("Stored IP address in userList: %s\n", debug_ip_str);
+
+        send_msg(fd, "200 PORT command successful.\n");
+    }
+}
+
+void storCom(User* userList, int index, int fd, char *buffer){
+    if(strncmp(buffer + 4, " ", 1) != 0 || strlen(buffer + 5) == 0){
+        send_msg(fd, "501 Syntax error in parameters or arguments.\n");
+        return;
+    } else if(!userList[index].auth){
+        send_msg(fd, "530 Not logged in.\n");
+        return;
+    } else if(userList[index].addr.s_addr == 0 || userList[index].port == 0) {
+        send_msg(fd, "425 Use PORT or PASV first.\n");
+        return;
+    } else {
+        // Send preliminary reply
+        send_msg(fd, "150 Opening data connection.\n");
+
+        int pid = fork();
+        if(pid < 0){
+            perror("fork error");
+            exit(1);
+        }
+        if(pid == 0){
+            signal(SIGTERM, closeChild);
+            children.command_fd = fd;
+
+            // Prepare file paths
+            char* fileName = buffer + 5; // Skip 'STOR ' (5 characters)
+            char file[FILENAME_MAX];
+            char temp_file[FILENAME_MAX];
+            snprintf(file, FILENAME_MAX, "./%s%s/%s", userList[index].username, userList[index].dir, fileName);
+            snprintf(temp_file, FILENAME_MAX, "%s.incomplete", file);
+
+            // Open the temporary file for writing
+            children.file = fopen(temp_file, "wb");
+            if (!children.file) {
+                perror("Failed to open file");
+                send_msg(children.command_fd, "550 File open failed.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Open data connection
+            if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
+                send_msg(children.command_fd, "425 Can't open data connection.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Receive data and write to file
+            char file_buffer[BUFFER_SIZE];
+            int bytes_read;
+            while ((bytes_read = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
+                if(fwrite(file_buffer, 1, bytes_read, children.file) < bytes_read){
+                    perror("File write error");
+                    send_msg(children.command_fd, "452 Error writing file.\n");
+                    closeChild(SIGTERM);
+                }
+            }
+
+            fclose(children.file);
+            close(children.data_fd);
+
+            // Rename the temporary file to the final file
+            if(rename(temp_file, file) < 0){
+                perror("Failed to rename file");
+                send_msg(children.command_fd, "550 File rename failed.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Send transfer completion reply
+            send_msg(children.command_fd, "226 Transfer complete.\n");
+            closeChild(SIGTERM);
+        }
+    }
+}
+
+void retrCom(User* userList, int index, int fd, char *buffer){
+    if(strncmp(buffer + 4, " ", 1) != 0 || strlen(buffer + 5) == 0){
+        send_msg(fd, "501 Syntax error in parameters or arguments.\n");
+        return;
+    } else if(!userList[index].auth){
+        send_msg(fd, "530 Not logged in.\n");
+        return;
+    } else if(userList[index].addr.s_addr == 0 || userList[index].port == 0) {
+        send_msg(fd, "425 Use PORT or PASV first.\n");
+        return;
+    } else {
+        // Send preliminary reply
+        send_msg(fd, "150 Opening data connection.\n");
+
+        int pid = fork();
+        if(pid < 0){
+            perror("fork error");
+            exit(1);
+        }
+        if(pid == 0){
+            // Child process
+            signal(SIGTERM, closeChild);
+            children.command_fd = fd;
+
+            // Prepare file path
+            char* fileName = buffer + 5; // Skip 'RETR ' (5 characters)
+            char file_path[FILENAME_MAX];
+            snprintf(file_path, FILENAME_MAX, "./%s%s/%s", userList[index].username, userList[index].dir, fileName);
+
+            // Open the file for reading
+            children.file = fopen(file_path, "rb");
+            if (!children.file) {
+                perror("Failed to open file");
+                send_msg(children.command_fd, "550 File not found.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Open data connection
+            if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
+                send_msg(children.command_fd, "425 Can't open data connection.\n");
+                closeChild(SIGTERM);
+            }
+
+            // Send file data
+            char file_buffer[BUFFER_SIZE];
+            int bytes_read;
+            while ((bytes_read = fread(file_buffer, 1, BUFFER_SIZE, children.file)) > 0) {
+                if(send(children.data_fd, file_buffer, bytes_read, 0) < 0){
+                    perror("Send error");
+                    send_msg(children.command_fd, "426 Connection closed; transfer aborted.\n");
+                    closeChild(SIGTERM);
+                }
+            }
+
+            fclose(children.file);
+            close(children.data_fd);
+
+            // Send transfer completion reply
+            send_msg(children.command_fd, "226 Transfer complete.\n");
+            closeChild(SIGTERM);
+        }
+    }
+}
+
+void send_msg(int fd, char* msg) {
+	send(fd, msg, strlen(msg)+1, 0);
+}
+
+int open_data_connection(struct in_addr client_addr, int client_port){
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr, ip_str, INET_ADDRSTRLEN);
+
+    printf("Server connecting to client at %s:%d\n", ip_str, client_port);
+
+    int data_sd = socket(AF_INET, SOCK_STREAM, 0);
+    if(data_sd < 0) {
+        perror("Data socket creation failed");
+        return -1;
+    }
+
+    // Allow the OS to assign an available port by binding to port 0
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(0); // Bind to any available port
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(data_sd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind error");
+        close(data_sd);
+        return -1;
+    }
+
+    // Connect to client
+    struct sockaddr_in client_socket_addr;
+    memset(&client_socket_addr, 0, sizeof(client_socket_addr));
+    client_socket_addr.sin_family = AF_INET;
+    client_socket_addr.sin_port = htons(client_port);
+    client_socket_addr.sin_addr = client_addr;
+
+    if (connect(data_sd, (struct sockaddr*)&client_socket_addr, sizeof(client_socket_addr)) < 0) {
+        perror("Connect error");
+        close(data_sd);
+        return -1;
+    }
+    return data_sd;
+}
+
+void closeChild(int sig) {
+	// Clean up and exit
+	if (sig == SIGTERM) {
+		close(children.command_fd);
+		close(children.data_fd);
+		if (!children.file) {
+			fclose(children.file);
+			children.file = NULL;
+		}
+		exit(0);
+	}
 }
