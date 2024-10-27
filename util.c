@@ -1,3 +1,4 @@
+#include "ftp_commands.h"
 #include "util.h"
 #include <string.h>
 #include <stdio.h>
@@ -128,5 +129,25 @@ void handle_server_commands(int sock, char *buffer) {
         } else {
             perror("recv() failed");
         }
+    }
+}
+
+void handle_local_cwd(char *dir) {
+    while(*dir == ' ') dir++; // skip spaces
+    if (*dir == '\0') {
+        printf("Usage: !CWD <directory>\n");
+    } else if (chdir(dir) == 0) {
+        printf("Local directory changed to %s\n", dir);
+    } else {
+        perror("chdir() error");
+    }
+}
+
+void handle_local_pwd() {
+    char cwd[BUFFER_SIZE];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Local current directory: %s\n", cwd);
+    } else {
+        perror("getcwd() error");
     }
 }

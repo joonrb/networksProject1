@@ -18,6 +18,7 @@ ChildP children;
 char* server_dir = "./server";
 
 int main(){
+    signal(SIGCHLD, SIG_IGN); // Ignore child process termination
     int server_fd, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -169,6 +170,7 @@ void checkPass(User* userList, int index, int fd, char *buffer){
 }
 
 void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* userList){
+    (void)max_socket_so_far;
     int index = -1;
     for(int i = 0; i < MAX_CONNECT; i++){
         if(userList[i].userfd == fd){
@@ -235,11 +237,19 @@ void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* user
             handle_pwd(fd);
         }
         else if(strncmp("QUIT", buffer, 4) == 0){
-            //send(client_sock, "221 Goodbye\n", 12, 0);
+            send_msg(fd, "221 Service closing control connection.\n");
+            close(fd);
+            FD_CLR(fd, allsocket);
+            userList[index].userfd = -1;
+            userList[index].auth = 0;
+            userList[index].username = NULL;
+            bzero(userList[index].dir, sizeof(userList[index].dir));
+            sprintf(userList[index].dir, "/");
+            return;
         }
         else {
             // Wrong commands 
-            send_msg(fd, "202 Command not implemented. HC\n");
+            send_msg(fd, "202 Command not implemented. \n");
         }
     }
 }
@@ -344,7 +354,7 @@ void storCom(User* userList, int index, int fd, char *buffer){
             char file_buffer[BUFFER_SIZE];
             int bytes_read;
             while ((bytes_read = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
-                if(fwrite(file_buffer, 1, bytes_read, children.file) < bytes_read){
+                if(fwrite(file_buffer, 1, bytes_read, children.file) < (unsigned long)bytes_read){
                     perror("File write error");
                     send_msg(children.command_fd, "452 Error writing file.\n");
                     closeChild(SIGTERM);
@@ -433,6 +443,7 @@ void retrCom(User* userList, int index, int fd, char *buffer){
 }
 
 void listCom(User* userList, int index, int fd, char *buffer){
+    (void)buffer;
     if(!userList[index].auth){
         send_msg(fd, "530 Not logged in.\n");
         return;
@@ -549,4 +560,10 @@ void closeChild(int sig) {
 		exit(0);
 	}
 }
+
+
+
+
+
+
 

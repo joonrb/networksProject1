@@ -20,7 +20,7 @@ char* client_dir = "./client";
 ChildP children;
 
 int main() {
-    int server_fd, datasock;
+    int server_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
 
@@ -44,7 +44,7 @@ int main() {
     // Configure the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(9002);
+    server_addr.sin_port = htons(21);
     server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
 
     if (bind(server_fd, (const struct sockaddr *)&client_addr, client_len) < 0) {
@@ -386,7 +386,7 @@ void retrCom(int server_fd, char* buffer){
         char file_buffer[BUFFER_SIZE];
         int bytes_received_data;
         while ((bytes_received_data = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
-            if(fwrite(file_buffer, 1, bytes_received_data, children.file) < bytes_received_data){
+            if(fwrite(file_buffer, 1, bytes_received_data, children.file) < (unsigned long)bytes_received_data){
                 perror("File write error");
                 closeChild(SIGTERM);
             }
@@ -415,6 +415,7 @@ void retrCom(int server_fd, char* buffer){
 }
 
 void listCom(int server_fd, char* buffer){
+    (void)buffer;
     // Send PORT command first
     int data_listen_fd = portCom(server_fd);
     if(data_listen_fd < 0){
