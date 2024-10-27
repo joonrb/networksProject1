@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <errno.h>
 
 void send_file_list(int client_sock) {
     DIR *d;
@@ -27,27 +28,47 @@ void send_file_list(int client_sock) {
 
 void handle_cwd(int client_sock, char *dir) {
     char buffer[BUFFER_SIZE];
-    while(*dir == ' ') dir++; // skip spaces
-    if(chdir(dir) == 0){
-        char cwd[BUFFER_SIZE];
-        if(getcwd(cwd, sizeof(cwd)) != NULL){
-            snprintf(buffer, BUFFER_SIZE, "200 directory changed to %s\n", cwd);
+    char cwd[BUFFER_SIZE];
+
+    // Skip leading spaces
+    while(*dir == ' ') dir++;
+
+    if (*dir == '\0') {
+        // No argument provided, change to home directory
+        if (chdir(getenv("HOME")) == 0) {
+            getcwd(cwd, sizeof(cwd));
+            snprintf(buffer, BUFFER_SIZE, "250 Directory changed to %s\n", cwd);
         } else {
-            snprintf(buffer, BUFFER_SIZE, "550 Error getting current directory.\n");
+            snprintf(buffer, BUFFER_SIZE, "550 Failed to change to home directory.\n");
         }
     } else {
-        snprintf(buffer, BUFFER_SIZE, "550 No such file or directory.\n");
+        // Argument provided
+        if (chdir(dir) == 0) {
+            getcwd(cwd, sizeof(cwd));
+            snprintf(buffer, BUFFER_SIZE, "250 Directory changed to %s\n", cwd);
+        } else {
+            snprintf(buffer, BUFFER_SIZE, "550 Failed to change directory. %s\n", strerror(errno));
+        }
     }
     send(client_sock, buffer, strlen(buffer), 0);
 }
 
-void handle_pwd(int client_sock) {
+void handle_pwd(int client_sock, char *args) {
     char buffer[BUFFER_SIZE];
     char cwd[BUFFER_SIZE];
-    if(getcwd(cwd, sizeof(cwd)) != NULL){
-        snprintf(buffer, BUFFER_SIZE, "257 \"%s\"\n", cwd);
+
+    // Skip leading spaces
+    while(*args == ' ') args++;
+
+    if (*args != '\0') {
+        // Arguments provided, which is incorrect for PWD
+        snprintf(buffer, BUFFER_SIZE, "501 Syntax error in parameters or arguments.\r\n");
     } else {
-        snprintf(buffer, BUFFER_SIZE, "550 Error getting current directory.\n");
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            snprintf(buffer, BUFFER_SIZE, "257 \"%s\" is the current directory\r\n", cwd);
+        } else {
+            snprintf(buffer, BUFFER_SIZE, "550 Error getting current directory: %s\r\n", strerror(errno));
+        }
     }
     send(client_sock, buffer, strlen(buffer), 0);
 }
@@ -133,21 +154,44 @@ void handle_server_commands(int sock, char *buffer) {
 }
 
 void handle_local_cwd(char *dir) {
-    while(*dir == ' ') dir++; // skip spaces
+    char cwd[BUFFER_SIZE];
+
+    // Skip leading spaces
+    while(*dir == ' ') dir++;
+
     if (*dir == '\0') {
-        printf("Usage: !CWD <directory>\n");
-    } else if (chdir(dir) == 0) {
-        printf("Local directory changed to %s\n", dir);
+        // No argument provided, change to home directory
+        if (chdir(getenv("HOME")) == 0) {
+            getcwd(cwd, sizeof(cwd));
+            printf("Local directory changed to %s\n", cwd);
+        } else {
+            printf("Failed to change to home directory: %s\n", strerror(errno));
+        }
     } else {
-        perror("chdir() error");
+        // Argument provided
+        if (chdir(dir) == 0) {
+            getcwd(cwd, sizeof(cwd));
+            printf("Local directory changed to %s\n", cwd);
+        } else {
+            printf("Failed to change directory: %s\n", strerror(errno));
+        }
     }
 }
 
-void handle_local_pwd() {
+void handle_local_pwd(char *args) {
     char cwd[BUFFER_SIZE];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        printf("Local current directory: %s\n", cwd);
+
+    // Skip leading spaces
+    while(*args == ' ') args++;
+
+    if (*args != '\0') {
+        // Arguments provided, which is incorrect for PWD
+        printf("Error: PWD command does not accept any arguments.\n");
     } else {
-        perror("getcwd() error");
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("Local current directory: %s\n", cwd);
+        } else {
+            printf("Error getting current directory: %s\n", strerror(errno));
+        }
     }
 }
