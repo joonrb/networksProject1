@@ -65,9 +65,17 @@ void handle_cwd(int client_sock, char *dir) {
 void handle_pwd(int client_sock) {
     char buffer[BUFFER_SIZE];
     char cwd[BUFFER_SIZE];
-
+    
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        snprintf(buffer, BUFFER_SIZE, "257 \"%s\" is the current directory\r\n", cwd);
+        // Find the position of "server/" in the path
+        char *relative_path = strstr(cwd, "server/");
+        if (relative_path) {
+            // Skip past "server/" to get just the username and remaining path
+            relative_path += 7;  // Length of "server/"
+            snprintf(buffer, BUFFER_SIZE, "257 %s/\r\n", relative_path);
+        } else {
+            snprintf(buffer, BUFFER_SIZE, "550 Failed to get relative path\r\n");
+        }
     } else {
         snprintf(buffer, BUFFER_SIZE, "550 Failed to get current directory: %s\r\n", strerror(errno));
     }
@@ -156,25 +164,26 @@ void handle_local_pwd(const char *args) {
 void handle_local_list(const char *args) {
     // Skip leading spaces
     while (args && *args == ' ') args++;
-
     if (args && *args != '\0') {
         printf("501 Syntax error: !LIST command doesn't accept arguments\n");
         return;
     }
 
-    FILE *fp = popen("ls -l", "r");
-    if (!fp) {
-        printf("Error executing ls command: %s\n", strerror(errno));
+    DIR *d;
+    struct dirent *dir;
+
+    d = opendir(".");
+    if (!d) {
+        printf("Error opening directory: %s\n", strerror(errno));
         return;
     }
 
-    char buffer[BUFFER_SIZE];
-    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-        printf("%s", buffer);
+    // Simple listing of filenames only
+    while ((dir = readdir(d)) != NULL) {
+        // Skip hidden files (starting with .)
+        if (dir->d_name[0] != '.') {
+            printf("%s\n", dir->d_name);
+        }
     }
-
-    int status = pclose(fp);
-    if (status == -1) {
-        printf("Error closing pipe: %s\n", strerror(errno));
-    }
+    closedir(d);
 }
