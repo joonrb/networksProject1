@@ -20,7 +20,7 @@ char* client_dir = "./client";
 ChildP children;
 
 int main() {
-    int server_fd, datasock;
+    int server_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
 
@@ -144,9 +144,11 @@ void handleCommand(int server_fd){
             handle_local_cwd(buffer + 4);
         }
         else if(strncmp(buffer, "!PWD", 4) == 0){
-            handle_local_pwd();
+            handle_local_pwd(buffer + 4);
         }
-        else {
+        else if (strncmp(buffer, "!LIST", 5) == 0) {
+            handle_local_list(buffer + 5);
+        } else {
             // For other commands, send them directly
             if (send(server_fd, buffer, strlen(buffer), 0) < 0) {
                 perror("send failed");
@@ -399,7 +401,7 @@ void retrCom(int server_fd, char* buffer){
         char file_buffer[BUFFER_SIZE];
         int bytes_received_data;
         while ((bytes_received_data = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
-            if(fwrite(file_buffer, 1, bytes_received_data, children.file) < bytes_received_data){
+            if(fwrite(file_buffer, 1, bytes_received_data, children.file) < (size_t)bytes_received_data) {
                 perror("File write error");
                 closeChild(SIGTERM);
             }
@@ -544,3 +546,4 @@ void closeChild(int sig) {
 void send_msg(int fd, char* msg) {
 	send(fd, msg, strlen(msg)+1, 0);
 }
+

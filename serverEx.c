@@ -347,7 +347,7 @@ void storCom(User* userList, int index, int fd, char *buffer){
             char file_buffer[BUFFER_SIZE];
             int bytes_read;
             while ((bytes_read = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
-                if(fwrite(file_buffer, 1, bytes_read, children.file) < bytes_read){
+                if(fwrite(file_buffer, 1, bytes_read, children.file) < (size_t)bytes_read){
                     perror("File write error");
                     // Can't send message to client here
                     closeChild(SIGTERM);
@@ -564,3 +564,4 @@ void closeChild(int sig) {
 		exit(0);
 	}
 }
+
