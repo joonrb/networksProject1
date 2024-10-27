@@ -177,22 +177,15 @@ void checkPass(User* userList, int index, int fd, char *buffer) {
             if(strncmp(buffer + 5, db[i].password, sizeof(db[i].password)) == 0) {
                 userList[index].auth = 1;
                 
-                // Create or change to user directory
-                char user_dir[BUFFER_SIZE];
-                snprintf(user_dir, BUFFER_SIZE, "./server/%s", userList[index].username);
-                
-                // Create server directory if it doesn't exist
-                mkdir("./server", 0755);
-                
-                // Try to change to user directory (create it if it doesn't exist)
-                if (chdir(user_dir) == -1) {
-                    mkdir(user_dir, 0755);
-                    if (chdir(user_dir) == -1) {
-                        send_msg(fd, "550 Failed to change to user directory.\n");
-                        return;
-                    }
+                // Change to or create user directory
+                if (chdir(userList[index].username) == -1) {
+                    mkdir(userList[index].username, 0755);
+                    chdir(userList[index].username);
                 }
 
+                // Store the user's base directory path
+                getcwd(userList[index].dir, FILENAME_MAX);
+                
                 send_msg(fd, "230 User logged in, proceed.\n");
                 printf("Successful login.\n");
                 return;
