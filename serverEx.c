@@ -96,6 +96,8 @@ int main(){
                     }
 
                     send_msg(client_sock, "220 Service ready for new user! \n");
+                    printf("Connection established with user %d\n", fd);
+                    printf("Their Port: %d\n", ntohs(client_addr.sin_port));
 
                     FD_SET(client_sock, &all_sockets);
                     if (client_sock > max_socket_so_far) {
@@ -145,6 +147,7 @@ void checkUser(User* userList, int index, int fd, char *buffer){
             if(strncmp(buffer + 5, db[i].username, sizeof(db[i].username)) == 0){
                 userList[index].username = db[i].username;
                 send_msg(fd, "331 Username OK, need password. \n");
+                printf("Successful username verification. \n");
             }
         }
     }
@@ -162,6 +165,7 @@ void checkPass(User* userList, int index, int fd, char *buffer){
             if(strcmp(userList[index].username, db[i].username) == 0 && strncmp(buffer + 5, db[i].password, sizeof(db[i].password)) == 0){
                 userList[index].auth = 1;
                 send_msg(fd, "230 User logged in, proceed. \n");
+                printf("Successful login. \n");
             }
         }
     }
@@ -248,9 +252,6 @@ void portCom(User* userList, int index, int fd, char *buffer){
     char *newline = strpbrk(buffer, "\r\n");
     if (newline) *newline = '\0';
 
-    // Print the received buffer
-    printf("Received PORT command: '%s'\n", buffer);
-
     if (buffer[4] != ' ') {
         send_msg(fd, "202 command not implemented. PC\n");
         return;
@@ -264,10 +265,6 @@ void portCom(User* userList, int index, int fd, char *buffer){
             return;
         }
 
-        // Print parsed IP and port components
-        printf("Parsed IP address: %d.%d.%d.%d\n", h1, h2, h3, h4);
-        printf("Parsed port components: %d, %d\n", p1, p2);
-
         // Validate IP and port components
         if ((h1 | h2 | h3 | h4 | p1 | p2) & ~0xFF) {
             send_msg(fd, "501 Invalid IP address or port.\n");
@@ -279,17 +276,12 @@ void portCom(User* userList, int index, int fd, char *buffer){
 
         userList[index].port = (p1 << 8) | p2;
 
-        printf("Computed port: %d\n", userList[index].port);
-
         if (inet_pton(AF_INET, addr_str, &(userList[index].addr)) != 1) {
             send_msg(fd, "501 Invalid IP address.\n");
             return;
         }
 
-        // Print stored IP address
-        char debug_ip_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(userList[index].addr), debug_ip_str, INET_ADDRSTRLEN);
-        printf("Stored IP address in userList: %s\n", debug_ip_str);
+        printf("Ports Received: %d, %d, %d, %d, %d, %d \n", h1, h2, h3, h4, p1, p2);
 
         send_msg(fd, "200 PORT command successful.\n");
     }
@@ -315,8 +307,9 @@ void storCom(User* userList, int index, int fd, char *buffer){
             exit(1);
         }
         if(pid == 0){
+            // Child process
+            // Handle data connection
             signal(SIGTERM, closeChild);
-            children.command_fd = fd;
 
             // Prepare file paths
             char* fileName = buffer + 5; // Skip 'STOR ' (5 characters)
@@ -329,13 +322,15 @@ void storCom(User* userList, int index, int fd, char *buffer){
             children.file = fopen(temp_file, "wb");
             if (!children.file) {
                 perror("Failed to open file");
-                send_msg(children.command_fd, "550 File open failed.\n");
+                // Can't send message to client here
                 closeChild(SIGTERM);
             }
 
+            printf("File okay, beginning data conenctions \n");
+
             // Open data connection
             if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
-                send_msg(children.command_fd, "425 Can't open data connection.\n");
+                // Can't send message to client here
                 closeChild(SIGTERM);
             }
 
@@ -345,7 +340,7 @@ void storCom(User* userList, int index, int fd, char *buffer){
             while ((bytes_read = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
                 if(fwrite(file_buffer, 1, bytes_read, children.file) < bytes_read){
                     perror("File write error");
-                    send_msg(children.command_fd, "452 Error writing file.\n");
+                    // Can't send message to client here
                     closeChild(SIGTERM);
                 }
             }
@@ -356,16 +351,23 @@ void storCom(User* userList, int index, int fd, char *buffer){
             // Rename the temporary file to the final file
             if(rename(temp_file, file) < 0){
                 perror("Failed to rename file");
-                send_msg(children.command_fd, "550 File rename failed.\n");
+                // Can't send message to client here
                 closeChild(SIGTERM);
             }
 
-            // Send transfer completion reply
-            send_msg(children.command_fd, "226 Transfer complete.\n");
             closeChild(SIGTERM);
+        } else {
+            // Parent process
+            // Wait for child process to complete
+            int status;
+            waitpid(pid, &status, 0);
+
+            // Send transfer completion reply
+            send_msg(fd, "226 Transfer complete.\n");
         }
     }
 }
+
 
 void retrCom(User* userList, int index, int fd, char *buffer){
     if(strncmp(buffer + 4, " ", 1) != 0 || strlen(buffer + 5) == 0){
@@ -403,6 +405,8 @@ void retrCom(User* userList, int index, int fd, char *buffer){
                 send_msg(children.command_fd, "550 File not found.\n");
                 closeChild(SIGTERM);
             }
+
+            printf("File okay, beginning data conenctions \n");
 
             // Open data connection
             if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
@@ -452,6 +456,8 @@ void listCom(User* userList, int index, int fd, char *buffer){
             signal(SIGTERM, closeChild);
             children.command_fd = fd;
 
+            printf("File okay, beginning data conenctions \n");
+
             // Open data connection
             if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
                 send_msg(children.command_fd, "425 Can't open data connection.\n");
@@ -460,7 +466,7 @@ void listCom(User* userList, int index, int fd, char *buffer){
 
             // Generate directory listing
             char cmd[256];
-            snprintf(cmd, sizeof(cmd), "ls -l ./%s%s", userList[index].username, userList[index].dir);
+            snprintf(cmd, sizeof(cmd), "ls -1 ./%s%s", userList[index].username, userList[index].dir);
 
             FILE *ls = popen(cmd, "r");
             if (!ls) {
@@ -500,7 +506,7 @@ int open_data_connection(struct in_addr client_addr, int client_port){
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &client_addr, ip_str, INET_ADDRSTRLEN);
 
-    printf("Server connecting to client at %s:%d\n", ip_str, client_port);
+    printf("Connecting to Client Transfer Socket... \n");
 
     int data_sd = socket(AF_INET, SOCK_STREAM, 0);
     if(data_sd < 0) {
@@ -533,6 +539,7 @@ int open_data_connection(struct in_addr client_addr, int client_port){
         close(data_sd);
         return -1;
     }
+    printf("Connection Successful \n");
     return data_sd;
 }
 

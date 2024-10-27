@@ -235,6 +235,28 @@ int portCom(int server_fd){
 }
 
 void storCom(int server_fd, char* buffer, int data_listen_fd){
+    // Parent process
+    // Send STOR command
+    send_msg(server_fd, buffer);
+
+    // Wait for server's response to STOR command
+    char response[BUFFER_SIZE];
+    int bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
+    if (bytes_received <= 0) {
+        perror("Failed to receive server response to STOR command");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+    response[bytes_received] = '\0';
+    printf("%s", response);
+
+    // Check if the server is ready to receive the file
+    if (strncmp(response, "150", 3) != 0 && strncmp(response, "125", 3) != 0) {
+        fprintf(stderr, "Server did not accept STOR command.\n");
+        close(data_listen_fd);
+        return;
+    }
+
     int pid = fork();
     if(pid < 0){
         perror("fork error");
@@ -243,31 +265,12 @@ void storCom(int server_fd, char* buffer, int data_listen_fd){
     }
 
     if(pid == 0){
+        // Child process
         signal(SIGTERM, closeChild);
-        children.command_fd = server_fd;
         children.data_listen_fd = data_listen_fd;
         children.file = fopen(buffer+5, "rb");
         if (!children.file) {
             perror("Failed to open file");
-            closeChild(SIGTERM);
-        }
-
-        // Send STOR command
-        send_msg(children.command_fd, buffer);
-
-        // Wait for server's response to STOR command
-        char response[BUFFER_SIZE];
-        int bytes_received = recv(children.command_fd, response, BUFFER_SIZE, 0);
-        if (bytes_received <= 0) {
-            perror("Failed to receive server response to STOR command");
-            closeChild(SIGTERM);
-        }
-        response[bytes_received] = '\0';
-        printf("%s", response);
-
-        // Check if the server is ready to receive the file
-        if (strncmp(response, "150", 3) != 0 && strncmp(response, "125", 3) != 0) {
-            fprintf(stderr, "Server did not accept STOR command.\n");
             closeChild(SIGTERM);
         }
 
@@ -289,15 +292,25 @@ void storCom(int server_fd, char* buffer, int data_listen_fd){
             }
         }
 
-        // Close data connection and wait for server's transfer completion response
+        // Close data connection
         close(children.data_fd);
-        bytes_received = recv(children.command_fd, response, BUFFER_SIZE, 0);
+        fclose(children.file);
+
+        closeChild(SIGTERM);
+    } else {
+        // Parent process
+        close(data_listen_fd); // Close listening socket in parent
+
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+
+        // Wait for server's final response (e.g., 226 Transfer complete)
+        bytes_received = recv(server_fd, response, BUFFER_SIZE, 0);
         if (bytes_received > 0) {
             response[bytes_received] = '\0';
             printf("%s", response);
         }
-
-        closeChild(SIGTERM);
     }
 }
 
@@ -479,9 +492,6 @@ void listCom(int server_fd, char* buffer){
         while ((bytes_received_data = recv(children.data_fd, data_buffer, BUFFER_SIZE, 0)) > 0) {
             fwrite(data_buffer, 1, bytes_received_data, stdout);
         }
-
-        close(children.data_fd);
-        close(children.data_listen_fd);
 
         closeChild(SIGTERM);
     } else {
