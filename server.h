@@ -1,7 +1,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#define PORT 9002
+#define PORT 21
 #define BUFFER_SIZE 1024
 #define NUM_OF_USERS 3
 #define MAX_NAME_SIZE 10
