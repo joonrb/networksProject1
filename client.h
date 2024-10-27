@@ -1,6 +1,8 @@
 #ifndef CLIENT_H
 #define CLIENT_H
 
+#include <signal.h>
+
 #define SERVER_IP "127.0.0.1"
 #define BUFFER_SIZE 1024
 
@@ -11,6 +13,7 @@ typedef struct{
     int data_listen_fd;
 } ChildP;
 
+void handle_signal(int sig);
 void handleCommand(int server_fd);
 void handleMessage(int server_fd);
 void storCom(int server_fd, char* buffer, int data_listen_fd);

@@ -16,10 +16,12 @@
 #include "ftp_commands.h"
 
 static int port_offset = 0;
+static int server_fd = -1;
 char* client_dir = "./client";
 ChildP children;
 
 int main() {
+    signal(SIGINT, handle_signal);
     int server_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -104,6 +106,24 @@ void handleCommand(int server_fd){
 
     if (fgets(buffer, BUFFER_SIZE, stdin) != NULL) {
         buffer[strcspn(buffer, "\n")] = 0; // Remove newline character
+
+        // Handle QUIT command
+        if (strncmp(buffer, "QUIT", 4) == 0) {
+            printf("Sending QUIT command to server...\n");
+            send(server_fd, buffer, strlen(buffer), 0);
+            
+            // Wait for server's response
+            char response[BUFFER_SIZE];
+            int bytes_received = recv(server_fd, response, BUFFER_SIZE - 1, 0);
+            if (bytes_received > 0) {
+                response[bytes_received] = '\0';
+                printf("%s", response);
+            }
+            
+            printf("Closing connection. Goodbye!\n");
+            close(server_fd);
+            exit(0);
+        }
 
         // Check if the command is STOR
         if(strncmp(buffer, "STOR", 4) == 0){
@@ -547,3 +567,16 @@ void send_msg(int fd, char* msg) {
 	send(fd, msg, strlen(msg)+1, 0);
 }
 
+
+// Add signal handler for Ctrl+C
+void handle_signal(int sig) {
+    if (sig == SIGINT) {
+        printf("\nReceived interrupt signal. Sending QUIT command...\n");
+        if (server_fd != -1) {
+            send(server_fd, "QUIT\r\n", 6, 0);
+            close(server_fd);
+        }
+        printf("Connection closed. Goodbye!\n");
+        exit(0);
+    }
+}

@@ -9,6 +9,8 @@
 #include <signal.h> 
 #include <sys/select.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "server.h"
 #include "ftp_commands.h"
@@ -154,38 +156,64 @@ void checkUser(User* userList, int index, int fd, char *buffer){
     }
 }
 
-void checkPass(User* userList, int index, int fd, char *buffer){
-    if(strncmp(buffer + 4, " ", 1) && strncmp(buffer + 4, "\n", 1)){
-        send_msg(fd, "202 command not implemented. \n");
+void checkPass(User* userList, int index, int fd, char *buffer) {
+    if(strncmp(buffer + 4, " ", 1) && strncmp(buffer + 4, "\n", 1)) {
+        send_msg(fd, "501 Syntax error in parameters. Usage: PASS <password>\n");
+        return;
     }
-    else if(userList[index].username == NULL || userList[index].auth){
-        send_msg(fd, "503 Bad sequence of commands. \n");
+
+    if(userList[index].username == NULL) {
+        send_msg(fd, "503 Bad sequence of commands. Use USER first.\n");
+        return;
     }
-    else{
-        for(int i = 0; i < userNum; i++){
-            if(strcmp(userList[index].username, db[i].username) == 0 && strncmp(buffer + 5, db[i].password, sizeof(db[i].password)) == 0){
+
+    if(userList[index].auth) {
+        send_msg(fd, "503 Already logged in.\n");
+        return;
+    }
+
+    for(int i = 0; i < userNum; i++) {
+        if(strncmp(userList[index].username, db[i].username, sizeof(db[i].username)) == 0) {
+            if(strncmp(buffer + 5, db[i].password, sizeof(db[i].password)) == 0) {
                 userList[index].auth = 1;
-                send_msg(fd, "230 User logged in, proceed. \n");
-                printf("Successful login. \n");
+                
+                // Create or change to user directory
+                char user_dir[BUFFER_SIZE];
+                snprintf(user_dir, BUFFER_SIZE, "./server/%s", userList[index].username);
+                
+                // Create server directory if it doesn't exist
+                mkdir("./server", 0755);
+                
+                // Try to change to user directory (create it if it doesn't exist)
+                if (chdir(user_dir) == -1) {
+                    mkdir(user_dir, 0755);
+                    if (chdir(user_dir) == -1) {
+                        send_msg(fd, "550 Failed to change to user directory.\n");
+                        return;
+                    }
+                }
+
+                send_msg(fd, "230 User logged in, proceed.\n");
+                printf("Successful login.\n");
+                return;
             }
         }
     }
+    send_msg(fd, "530 Not logged in.\n");
 }
 
 void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* userList){
+    char buffer[BUFFER_SIZE];
     int index = -1;
-    for(int i = 0; i < MAX_CONNECT; i++){
-        if(userList[i].userfd == fd){
+    
+    // Find user index
+    for(int i = 0; i < MAX_CONNECT; i++) {
+        if(userList[i].userfd == fd) {
             index = i;
             break;
         }
     }
-    if(index == -1){
-        perror("you shouldn't see this");
-        exit(1);
-    }
 
-    char buffer[BUFFER_SIZE];
     bzero(buffer,sizeof(buffer));
     int bytes_read;
 
@@ -246,8 +274,22 @@ void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* user
             }
             handle_pwd(fd);
         }
-        else if(strncmp("QUIT", buffer, 4) == 0){
-            //send(client_sock, "221 Goodbye\n", 12, 0);
+        else if(strncmp("QUIT", buffer, 4) == 0) {
+            send_msg(fd, "221 Goodbye.\n");
+            
+            // Clean up user data
+            if (index != -1) {
+                userList[index].userfd = -1;
+                userList[index].auth = 0;
+                userList[index].username = NULL;
+                bzero(userList[index].dir, sizeof(userList[index].dir));
+                printf("User logged out and data cleaned up.\n");
+            }
+
+            // Remove from select set and close socket
+            FD_CLR(fd, allsocket);
+            close(fd);
+            printf("Connection closed for fd %d\n", fd);
         }
         else {
             // Wrong commands 
