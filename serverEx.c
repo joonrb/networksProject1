@@ -11,6 +11,7 @@
 #include <errno.h>
 
 #include "server.h"
+#include "ftp_commands.h"
 
 Login db[NUM_OF_USERS];
 ChildP children;
@@ -231,18 +232,26 @@ void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* user
         else if(strncmp("LIST", buffer, 4) == 0){
             listCom(userList, index, fd, buffer);
         }
-        else if(strncmp("CWD", buffer, 4) == 0){
-            //Code for CWD command
+        else if(strncmp("CWD", buffer, 3) == 0){
+            if(!userList[index].auth){
+                send_msg(fd, "530 Not logged in.\n");
+                return;
+            }
+            handle_cwd(fd, buffer + 4);
         }
-        else if(strncmp("PWD", buffer, 4) == 0){
-            //Code for PWD command
+        else if(strcmp("PWD", buffer) == 0){
+            if(!userList[index].auth){
+                send_msg(fd, "530 Not logged in.\n");
+                return;
+            }
+            handle_pwd(fd);
         }
         else if(strncmp("QUIT", buffer, 4) == 0){
             //send(client_sock, "221 Goodbye\n", 12, 0);
         }
         else {
             // Wrong commands 
-            send_msg(fd, "202 Command not implemented. HC\n");
+            send_msg(fd, "202 Command not implemented.\n");
         }
     }
 }

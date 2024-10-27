@@ -13,6 +13,7 @@
 #include <errno.h>
 
 #include "client.h"
+#include "ftp_commands.h"
 
 static int port_offset = 0;
 char* client_dir = "./client";
@@ -43,7 +44,7 @@ int main() {
     // Configure the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(9002);
+    server_addr.sin_port = htons(2121);
     server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
 
     if (bind(server_fd, (const struct sockaddr *)&client_addr, client_len) < 0) {
@@ -138,6 +139,12 @@ void handleCommand(int server_fd){
         }
         else if(strncmp(buffer, "LIST", 4) == 0){
             listCom(server_fd, buffer);
+        }
+        else if(strncmp(buffer, "!CWD", 4) == 0){
+            handle_local_cwd(buffer + 4);
+        }
+        else if(strncmp(buffer, "!PWD", 4) == 0){
+            handle_local_pwd();
         }
         else {
             // For other commands, send them directly
