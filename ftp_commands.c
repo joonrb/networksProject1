@@ -23,13 +23,21 @@ void strip_newline(char *str) {
 void handle_cwd(int client_sock, char *dir) {
     char buffer[BUFFER_SIZE];
     char cwd[BUFFER_SIZE];
-    char original_dir[BUFFER_SIZE];
+    char user_root[BUFFER_SIZE];
 
-    // Store original directory
-    if (getcwd(original_dir, sizeof(original_dir)) == NULL) {
+    // Store current directory to get user root
+    if (getcwd(user_root, sizeof(user_root)) == NULL) {
         snprintf(buffer, BUFFER_SIZE, "550 Failed to get current directory: %s\r\n", strerror(errno));
         send(client_sock, buffer, strlen(buffer), 0);
         return;
+    }
+
+    // Get user's root directory (bob)
+    char *root_path = strstr(user_root, "server/");
+    if (root_path) {
+        root_path += 7;  // Skip past "server/"
+        char *end = strchr(root_path, '/');
+        if (end) *end = '\0';  // Truncate after username
     }
 
     // Skip leading spaces
@@ -44,16 +52,20 @@ void handle_cwd(int client_sock, char *dir) {
     // Try to change directory
     if (chdir(dir) == 0) {
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
-            // Verify we're still under the user's directory
-            if (strstr(cwd, original_dir) == cwd) {
-                snprintf(buffer, BUFFER_SIZE, "250 Directory successfully changed to %s\r\n", cwd);
+            // Check if we're still under the user's directory
+            if (strstr(cwd, root_path)) {
+                char *relative_path = strstr(cwd, "server/");
+                if (relative_path) {
+                    relative_path += 7;  // Skip past "server/"
+                    snprintf(buffer, BUFFER_SIZE, "200 directory changed to %s/\r\n", relative_path);
+                } else {
+                    snprintf(buffer, BUFFER_SIZE, "200 directory changed to %s/\r\n", root_path);
+                }
             } else {
-                // If outside user's directory, go back
-                chdir(original_dir);
+                chdir(user_root);  // Go back if we went too far up
                 snprintf(buffer, BUFFER_SIZE, "550 Access denied: Cannot leave user directory\r\n");
             }
         } else {
-            chdir(original_dir);
             snprintf(buffer, BUFFER_SIZE, "550 Failed to get current directory: %s\r\n", strerror(errno));
         }
     } else {
