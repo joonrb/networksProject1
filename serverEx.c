@@ -508,11 +508,8 @@ void listCom(User* userList, int index, int fd, char *buffer){
                 closeChild(SIGTERM);
             }
 
-            // Generate directory listing
-            char cmd[256];
-            snprintf(cmd, sizeof(cmd), "ls -1 ./%s%s", userList[index].username, userList[index].dir);
-
-            FILE *ls = popen(cmd, "r");
+            // Just list current directory
+            FILE *ls = popen("ls -1", "r");
             if (!ls) {
                 perror("Failed to run ls command");
                 send_msg(children.command_fd, "550 Failed to list directory.\n");
