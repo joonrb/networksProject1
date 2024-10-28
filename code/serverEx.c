@@ -16,7 +16,7 @@
 
 Login db[NUM_OF_USERS];
 ChildP children;
-char* server_dir = "../server";
+char* server_dir = "./server";
 
 int main(){
     int server_fd, client_sock;
