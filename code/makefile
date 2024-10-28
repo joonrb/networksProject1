@@ -22,5 +22,3 @@ clean:
 	rm -f $(CLIENT_OBJ) $(SERVER_OBJ) $(CLIENT_BIN) $(SERVER_BIN)
 
 .PHONY: all clean
-
-the make file

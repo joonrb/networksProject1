@@ -1,11 +1,11 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -w -g  
 CLIENT_SRC = clientEx.c
 SERVER_SRC = serverEx.c
 CLIENT_OBJ = $(CLIENT_SRC:.c=.o)
 SERVER_OBJ = $(SERVER_SRC:.c=.o)
-CLIENT_BIN = ftp_client
-SERVER_BIN = ftp_server
+CLIENT_BIN = client
+SERVER_BIN = server
 
 all: $(CLIENT_BIN) $(SERVER_BIN)
 
