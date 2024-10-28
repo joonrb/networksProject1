@@ -16,7 +16,7 @@
 #include "client.h"
 
 static int port_offset = 0;
-char* client_dir = "./client";
+char* client_dir = "../client";
 ChildP children;
 
 int main() {
