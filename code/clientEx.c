@@ -15,7 +15,7 @@
 
 #include "client.h"
 
-char* client_dir = "./client";
+char* client_dir = "../client";
 ChildP children;
 
 int main() {
