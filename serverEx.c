@@ -392,7 +392,6 @@ void storCom(User* userList, int index, int fd, char *buffer){
     }
 }
 
-
 void retrCom(User* userList, int index, int fd, char *buffer){
     if(strncmp(buffer + 4, " ", 1) != 0 || strlen(buffer + 5) == 0){
         send_msg(fd, "501 Syntax error in parameters or arguments.\n");
@@ -404,6 +403,17 @@ void retrCom(User* userList, int index, int fd, char *buffer){
         send_msg(fd, "425 Use PORT or PASV first.\n");
         return;
     } else {
+        // Prepare file path
+        char* fileName = buffer + 5; // Skip 'RETR ' (5 characters)
+        char file_path[FILENAME_MAX];
+        snprintf(file_path, FILENAME_MAX, "./%s%s/%s", userList[index].username, userList[index].dir, fileName);
+
+        // Check if the file exists and is readable
+        if(access(file_path, R_OK) != 0) {
+            send_msg(fd, "550 File not found.\n");
+            return;
+        }
+
         // Send preliminary reply
         send_msg(fd, "150 Opening data connection.\n");
 
@@ -417,21 +427,15 @@ void retrCom(User* userList, int index, int fd, char *buffer){
             signal(SIGTERM, closeChild);
             children.command_fd = fd;
 
-            // Prepare file path
-            char* fileName = buffer + 5; // Skip 'RETR ' (5 characters)
-            char file_path[FILENAME_MAX];
-            printf("%s\n, ", userList[index].dir);
-            snprintf(file_path, FILENAME_MAX, "./%s%s/%s", userList[index].username, userList[index].dir, fileName);
-
             // Open the file for reading
             children.file = fopen(file_path, "rb");
             if (!children.file) {
                 perror("Failed to open file");
-                send_msg(children.command_fd, "550 File not found.\n");
+                send_msg(children.command_fd, "550 Failed to open file.\n");
                 closeChild(SIGTERM);
             }
 
-            printf("File okay, beginning data conenctions \n");
+            printf("File okay, beginning data connections \n");
 
             // Open data connection
             if((children.data_fd = open_data_connection(userList[index].addr, userList[index].port)) < 0){
@@ -457,6 +461,7 @@ void retrCom(User* userList, int index, int fd, char *buffer){
             send_msg(children.command_fd, "226 Transfer complete.\n");
             closeChild(SIGTERM);
         }
+        // Parent process continues
     }
 }
 
