@@ -248,7 +248,7 @@ void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* user
             handle_pwd(userList, index, fd);
         }
         else if(strncmp("QUIT", buffer, 4) == 0){
-            send_msg(fd, "221 Goodbye.\n");
+            send_msg(fd, "221 Service closing control connection.\n");
             
             // Clean up user data
             if (index != -1) {
@@ -256,17 +256,16 @@ void handleCommand(int fd, fd_set* allsocket, int* max_socket_so_far, User* user
                 userList[index].auth = 0;
                 userList[index].username = NULL;
                 bzero(userList[index].dir, sizeof(userList[index].dir));
-                printf("User logged out and data cleaned up.\n");
             }
 
             // Remove from select set and close socket
             FD_CLR(fd, allsocket);
             close(fd);
-            printf("Connection closed for fd %d\n", fd);
+            printf("%d Closed! \n", fd);
         }
         else {
             // Wrong commands 
-            send_msg(fd, "202 Command not implemented. HC\n");
+            send_msg(fd, "202 Command not implemented.\n");
         }
     }
 }
@@ -323,7 +322,7 @@ void storCom(User* userList, int index, int fd, char *buffer){
         return;
     } else {
         // Send preliminary reply
-        send_msg(fd, "150 Opening data connection.\n");
+        send_msg(fd, "150 File Status Okay; about to open data connection.\n");
 
         int pid = fork();
         if(pid < 0){
@@ -361,7 +360,9 @@ void storCom(User* userList, int index, int fd, char *buffer){
             // Receive data and write to file
             char file_buffer[BUFFER_SIZE];
             int bytes_read;
+            int data_received = 0; // Flag to check if any data was received
             while ((bytes_read = recv(children.data_fd, file_buffer, BUFFER_SIZE, 0)) > 0) {
+                data_received = 1;
                 if(fwrite(file_buffer, 1, bytes_read, children.file) < bytes_read){
                     perror("File write error");
                     // Can't send message to client here
@@ -372,22 +373,41 @@ void storCom(User* userList, int index, int fd, char *buffer){
             fclose(children.file);
             close(children.data_fd);
 
+            if(data_received) {
             // Rename the temporary file to the final file
-            if(rename(temp_file, file) < 0){
-                perror("Failed to rename file");
-                // Can't send message to client here
-                closeChild(SIGTERM);
+                if(rename(temp_file, file) < 0){
+                    perror("Failed to rename file");
+                    exit(1); // Exit with error status
+                }
+            } else {
+                // No data received, delete the incomplete file
+                if (remove(temp_file) != 0) {
+                    perror("Failed to remove incomplete file");
+                }
+                // Exit with error status
+                exit(1);
             }
 
             closeChild(SIGTERM);
         } else {
-            // Parent process
             // Wait for child process to complete
             int status;
             waitpid(pid, &status, 0);
 
-            // Send transfer completion reply
-            send_msg(fd, "226 Transfer complete.\n");
+            if (WIFEXITED(status)) {
+                int exit_status = WEXITSTATUS(status);
+                if (exit_status == 0) {
+                    // Send transfer completion reply
+                    printf("226 Transfer complete.\n");
+                    send_msg(fd, "226 Transfer complete.\n");
+                } else {
+                    // An error occurred in the child process
+                    send_msg(fd, "451 Requested action aborted. Local error in processing.\n");
+                }
+            } else {
+                // Child process did not exit normally
+                send_msg(fd, "451 Requested action aborted. Local error in processing.\n");
+            }
         }
     }
 }
@@ -415,7 +435,7 @@ void retrCom(User* userList, int index, int fd, char *buffer){
         }
 
         // Send preliminary reply
-        send_msg(fd, "150 Opening data connection.\n");
+        send_msg(fd, "150 File Status Okay; about to open data connection.\n");
 
         int pid = fork();
         if(pid < 0){
@@ -458,6 +478,7 @@ void retrCom(User* userList, int index, int fd, char *buffer){
             close(children.data_fd);
 
             // Send transfer completion reply
+            printf("226 Transfer complete.\n");
             send_msg(children.command_fd, "226 Transfer complete.\n");
             closeChild(SIGTERM);
         }
@@ -474,7 +495,7 @@ void listCom(User* userList, int index, int fd, char *buffer){
         return;
     } else {
         // Send preliminary reply
-        send_msg(fd, "150 Opening data connection.\n");
+        send_msg(fd, "150 File Status Okay; about to open data connection.\n");
 
         int pid = fork();
         if(pid < 0){
@@ -521,6 +542,7 @@ void listCom(User* userList, int index, int fd, char *buffer){
             close(children.data_fd);
 
             // Send transfer completion reply
+            printf("Listing directory\n");
             send_msg(children.command_fd, "226 Transfer complete.\n");
             closeChild(SIGTERM);
         }
@@ -586,7 +608,13 @@ void cwdCom(User* userList, int index, int fd, char* buffer){
     userList[index].dir[sizeof(userList[index].dir) - 1] = '\0'; // Ensure null-termination
 
     // Send success message
-    send_msg(fd, "250 Directory successfully changed.\n");
+    //char* msg;
+    //sprintf(msg, "200 directory changed to %s/.\n", resolvedDir);
+    char* msg = malloc(BUFFER_SIZE);
+    bzero(msg, BUFFER_SIZE);
+    sprintf(msg,"200 directory changed to %s%s\n", userList[index].username, userList[index].dir);
+    send_msg(fd, msg);
+    free(msg);
 }
 
 

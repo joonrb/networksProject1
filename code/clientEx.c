@@ -15,12 +15,11 @@
 
 #include "client.h"
 
-static int port_offset = 0;
 char* client_dir = "./client";
 ChildP children;
 
 int main() {
-    int server_fd, datasock;
+    int server_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
 
@@ -44,7 +43,7 @@ int main() {
     // Configure the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(2121);
+    server_addr.sin_port = htons(8810);
     server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
 
     if (bind(server_fd, (const struct sockaddr *)&client_addr, client_len) < 0) {
@@ -106,7 +105,6 @@ void handleCommand(int server_fd){
         buffer[strcspn(buffer, "\n")] = 0; // Remove newline character
 
         if (strncmp(buffer, "QUIT", 4) == 0) {
-            printf("Sending QUIT command to server...\n");
             send(server_fd, buffer, strlen(buffer), 0);
             
             // Wait for server's response
@@ -116,14 +114,18 @@ void handleCommand(int server_fd){
                 response[bytes_received] = '\0';
                 printf("%s", response);
             }
-            
-            printf("Closing connection. Goodbye!\n");
             close(server_fd);
             exit(0);
         }
 
         // Check if the command is STOR
         if(strncmp(buffer, "STOR", 4) == 0){
+            FILE *file_to_send = fopen(buffer + 5, "rb");
+            if (!file_to_send) {
+                printf("550 File not found.\n");
+                return;
+            }
+            fclose(file_to_send);
             // Send PORT command first
             int data_listen_fd = portCom(server_fd);
             if(data_listen_fd < 0){
@@ -262,7 +264,6 @@ int portCom(int server_fd){
 }
 
 void storCom(int server_fd, char* buffer, int data_listen_fd){
-    // Parent process
     // Send STOR command
     send_msg(server_fd, buffer);
 
